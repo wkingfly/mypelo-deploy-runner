@@ -57,21 +57,14 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout target repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ fromJson(format('["{0}"]', inputs.repo_url))[0] != '' && inputs.repo_url || '' }}
-          ref: ${{ inputs.repo_branch }}
-          token: ${{ secrets.MYPELO_GITHUB_TOKEN }}
-
-      - name: Extract repo from URL
+      - name: Extract repo path from URL
         id: repo
         run: |
           REPO_PATH=$(echo "${{ inputs.repo_url }}" | sed 's|https://github.com/||' | sed 's|\.git$||')
           echo "path=$REPO_PATH" >> $GITHUB_OUTPUT
-          echo "Deploying repo: $REPO_PATH"
+          echo "Deploying repo: $REPO_PATH, branch: ${{ inputs.repo_branch }}"
 
-      - name: Checkout target repo (corrected)
+      - name: Checkout target repo
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.repo.outputs.path }}
@@ -82,16 +75,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      - name: Install dependencies
+      - name: Detect package manager and install
         run: |
           if [ -f "pnpm-lock.yaml" ]; then
+            echo "Using pnpm"
             npm install -g pnpm
             pnpm install --frozen-lockfile
           elif [ -f "yarn.lock" ]; then
+            echo "Using yarn"
+            npm install -g yarn
             yarn install --frozen-lockfile
           else
+            echo "Using npm"
             npm ci
           fi
 
@@ -122,24 +118,24 @@ jobs:
         run: |
           curl -s -X POST "${{ inputs.callback_url }}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "deployment_id": "${{ inputs.deployment_id }}",
-              "status": "success",
-              "project_name": "${{ inputs.project_name }}",
-              "project_type": "${{ inputs.project_type }}",
-              "run_id": "${{ github.run_id }}",
-              "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }'
+            -d "{
+              \"deployment_id\": \"${{ inputs.deployment_id }}\",
+              \"status\": \"success\",
+              \"project_name\": \"${{ inputs.project_name }}\",
+              \"project_type\": \"${{ inputs.project_type }}\",
+              \"run_id\": \"${{ github.run_id }}\",
+              \"run_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }"
 
       - name: Notify MyPelo (failure)
         if: ${{ inputs.callback_url != '' && failure() }}
         run: |
           curl -s -X POST "${{ inputs.callback_url }}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "deployment_id": "${{ inputs.deployment_id }}",
-              "status": "failed",
-              "project_name": "${{ inputs.project_name }}",
-              "run_id": "${{ github.run_id }}",
-              "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }'
+            -d "{
+              \"deployment_id\": \"${{ inputs.deployment_id }}\",
+              \"status\": \"failed\",
+              \"project_name\": \"${{ inputs.project_name }}\",
+              \"run_id\": \"${{ github.run_id }}\",
+              \"run_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }"
