@@ -1,0 +1,145 @@
+name: MyPelo Deploy Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: 'GitHub repo URL (https://github.com/user/repo)'
+        required: true
+        type: string
+      repo_branch:
+        description: 'Branch to deploy'
+        required: false
+        default: 'main'
+        type: string
+      cf_api_token:
+        description: 'Cloudflare API Token'
+        required: true
+        type: string
+      cf_account_id:
+        description: 'Cloudflare Account ID'
+        required: true
+        type: string
+      project_name:
+        description: 'CF Pages / Worker project name'
+        required: true
+        type: string
+      project_type:
+        description: 'pages or worker'
+        required: true
+        default: 'pages'
+        type: choice
+        options:
+          - pages
+          - worker
+      build_command:
+        description: 'Build command (e.g. npm run build)'
+        required: false
+        default: 'npm run build'
+        type: string
+      output_dir:
+        description: 'Build output directory (e.g. dist)'
+        required: false
+        default: 'dist'
+        type: string
+      callback_url:
+        description: 'MyPelo webhook URL to notify on completion'
+        required: false
+        type: string
+      deployment_id:
+        description: 'MyPelo deployment ID (for callback)'
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ fromJson(format('["{0}"]', inputs.repo_url))[0] != '' && inputs.repo_url || '' }}
+          ref: ${{ inputs.repo_branch }}
+          token: ${{ secrets.MYPELO_GITHUB_TOKEN }}
+
+      - name: Extract repo from URL
+        id: repo
+        run: |
+          REPO_PATH=$(echo "${{ inputs.repo_url }}" | sed 's|https://github.com/||' | sed 's|\.git$||')
+          echo "path=$REPO_PATH" >> $GITHUB_OUTPUT
+          echo "Deploying repo: $REPO_PATH"
+
+      - name: Checkout target repo (corrected)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.repo.outputs.path }}
+          ref: ${{ inputs.repo_branch }}
+          token: ${{ secrets.MYPELO_GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          if [ -f "pnpm-lock.yaml" ]; then
+            npm install -g pnpm
+            pnpm install --frozen-lockfile
+          elif [ -f "yarn.lock" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
+
+      - name: Build project
+        if: ${{ inputs.build_command != '' }}
+        run: ${{ inputs.build_command }}
+        env:
+          NODE_ENV: production
+
+      - name: Deploy to Cloudflare Pages
+        if: ${{ inputs.project_type == 'pages' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ inputs.cf_api_token }}
+          accountId: ${{ inputs.cf_account_id }}
+          command: pages deploy ${{ inputs.output_dir }} --project-name=${{ inputs.project_name }} --branch=main
+
+      - name: Deploy to Cloudflare Workers
+        if: ${{ inputs.project_type == 'worker' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ inputs.cf_api_token }}
+          accountId: ${{ inputs.cf_account_id }}
+          command: deploy
+
+      - name: Notify MyPelo (success)
+        if: ${{ inputs.callback_url != '' && success() }}
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "deployment_id": "${{ inputs.deployment_id }}",
+              "status": "success",
+              "project_name": "${{ inputs.project_name }}",
+              "project_type": "${{ inputs.project_type }}",
+              "run_id": "${{ github.run_id }}",
+              "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }'
+
+      - name: Notify MyPelo (failure)
+        if: ${{ inputs.callback_url != '' && failure() }}
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "deployment_id": "${{ inputs.deployment_id }}",
+              "status": "failed",
+              "project_name": "${{ inputs.project_name }}",
+              "run_id": "${{ github.run_id }}",
+              "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }'
