@@ -37,6 +37,11 @@ on:
         required: false
         default: 'npm run build'
         type: string
+      working_directory:
+        description: 'Subdirectory to install/build/deploy from (optional)'
+        required: false
+        default: '.'
+        type: string
       output_dir:
         description: 'Build output directory (e.g. dist)'
         required: false
@@ -76,7 +81,15 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Validate working directory
+        run: |
+          if [ ! -d "${{ inputs.working_directory }}" ]; then
+            echo "Working directory not found: ${{ inputs.working_directory }}" >&2
+            exit 1
+          fi
+
       - name: Detect package manager and install
+        working-directory: ${{ inputs.working_directory }}
         run: |
           if [ -f "pnpm-lock.yaml" ]; then
             echo "Using pnpm"
@@ -93,6 +106,7 @@ jobs:
 
       - name: Build project
         if: ${{ inputs.build_command != '' }}
+        working-directory: ${{ inputs.working_directory }}
         run: ${{ inputs.build_command }}
         env:
           NODE_ENV: production
@@ -103,7 +117,7 @@ jobs:
         with:
           apiToken: ${{ inputs.cf_api_token }}
           accountId: ${{ inputs.cf_account_id }}
-          command: pages deploy ${{ inputs.output_dir }} --project-name=${{ inputs.project_name }} --branch=main
+          command: pages deploy ${{ inputs.working_directory }}/${{ inputs.output_dir }} --project-name=${{ inputs.project_name }} --branch=main
 
       - name: Deploy to Cloudflare Workers
         if: ${{ inputs.project_type == 'worker' }}
@@ -111,7 +125,7 @@ jobs:
         with:
           apiToken: ${{ inputs.cf_api_token }}
           accountId: ${{ inputs.cf_account_id }}
-          command: deploy
+          command: deploy --cwd ${{ inputs.working_directory }}
 
       - name: Notify MyPelo (success)
         if: ${{ inputs.callback_url != '' && success() }}
