@@ -74,7 +74,6 @@ jobs:
         with:
           repository: ${{ steps.repo.outputs.path }}
           ref: ${{ inputs.repo_branch }}
-          token: ${{ secrets.MYPELO_GITHUB_TOKEN || github.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
